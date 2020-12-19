@@ -1,6 +1,5 @@
 import numpy as np
-import pandas as pd
-from sklearn.utils import validation
+from abc import ABC, abstractmethod
 
 class TreeNode():
 
@@ -8,7 +7,7 @@ class TreeNode():
     right = None
 
     def __init__(self, feature_index = None, feature_threshold = None, impurity = 0,
-     depth = 0, nsamples=0, hindex=0, clazz=None, clazz_percentage=0, impurity_decrease = 0):
+     depth = 0, nsamples=0, hindex=0, value=None, clazz_percentage=0, impurity_decrease = 0):
 
         self.feature_index = feature_index
         self.feature_threshold = feature_threshold
@@ -16,7 +15,7 @@ class TreeNode():
         self.depth = depth
         self.nsamples = nsamples
         self.hindex = hindex
-        self.clazz = clazz
+        self.value = value
         self.clazz_percentage = clazz_percentage
         self.impurity_decrease = impurity_decrease
 
@@ -27,7 +26,7 @@ class TreeNode():
         return f'{self.depth}d{self.hindex}h'
 
     def displayName(self, label_classes = None, label_features = None):
-        displayClass = self.clazz if label_classes is None else label_classes[self.clazz]
+        displayClass = self.value if label_classes is None else label_classes[self.value]
         displayFeature = self.feature_index if label_features is None or self.feature_index is None else label_features[self.feature_index]
 
         if self.depth == 0:
@@ -43,9 +42,11 @@ class TreeNode():
 
 
 
-class DecisionTreeClassifier():
+class DecisionTree(ABC):
 
     """
+    Abstract class for DecisionTreeClassifier and DecisionTreeRegressor
+
     leaf (also called external node) and an internal node. 
     An internal node will have further splits (also called children), 
     while a leaf is by definition a node without any children (without any further splits).
@@ -89,40 +90,12 @@ class DecisionTreeClassifier():
         self.debug = debug
         self.splitter = splitter
         self.min_impurity_decrease = min_impurity_decrease
-        self.random_state = np.random.RandomState(seed=random_state)
+
+        self.random_state = random_state if isinstance(random_state, np.random.RandomState) else np.random.RandomState(seed=0)
 
     def print(self, message):
         if self.debug:
             print(message)
-
-    def calc_entropy_for_class(self, sample, total_samples):
-        if total_samples == 0:
-            return 0
-
-        p = sample / total_samples
-
-        return -p * np.log2(p)
-
-    def calc_entropy(self, samples, total_samples):
-        return sum([self.calc_entropy_for_class(x, total_samples) for x in samples])
-
-    def calc_gini(self, samples, total_samples):
-
-        gini = 0
-        for sample in samples:
-            gini += self.calc_gini_for_class(sample, total_samples)
-
-        return gini
-
-    def calc_gini_for_class(self, sample, total_samples):
-        if total_samples == 0:
-            return 0
-        p = sample / total_samples
-
-        return p * (1 - p)
-
-    def calc_impurity_for_class(self, sample, total_samples):
-        return self.calc_entropy_for_class(sample, total_samples) if self.criterion == 'entropy' else self.calc_gini_for_class(sample, total_samples)
 
 
     def calc_impurity_decrease(self, total_samples, left_impurity, right_impurity, left_nsamples, right_nsamples):
@@ -134,30 +107,19 @@ class DecisionTreeClassifier():
     def get_depth(self):
         return self.current_depth
 
-    def fit(self, features, target):
+    @abstractmethod
+    def calculate_value_and_its_percentage_for_node(self, y):
+        pass
 
-        if isinstance(features, pd.DataFrame):
-            features = features.values
-        if isinstance(target, pd.Series):
-            target = target.values
+    @abstractmethod
+    def calculate_impurity(self, y, y_left, y_right):
+        pass
 
-        value_counts = np.unique(target, return_counts=True)
-
-        #sort_value_counts = np.argsort(-value_counts[1])
-        #value_counts = (value_counts[0][sort_value_counts], value_counts[1][sort_value_counts])
-
-        self.classes = value_counts[0]
-
-        root_samples = value_counts[1]
-        self.total_samples = len(target)
-
-        root_impurity = self.calc_entropy(root_samples, self.total_samples) if self.criterion == 'entropy' else self.calc_gini(root_samples, self.total_samples)
-
-        self.print(f'root_samles {root_samples}, root impurity {root_impurity}, root_samples {root_samples}, classes {self.classes}')
-
-        self.root_node = TreeNode(impurity = root_impurity, nsamples=self.total_samples)
+    def fit(self, X, y):
+        self.total_samples =len(y)
+        self.root_node = TreeNode(nsamples=self.total_samples)
         self.current_depth = 0
-        self.split_inner_node(self.root_node, features, target)
+        self.split_inner_node(self.root_node, X, y)
 
 
     def split_inner_node(self, node, features, targets):
@@ -183,11 +145,7 @@ class DecisionTreeClassifier():
 
 
         if targets_left is None or targets_right is None or self.min_samples_leaf > len(targets_left) or self.min_samples_leaf > len(targets_right):
-
-            left_counts = np.unique(targets_left, return_counts=True) if targets_left is not None else None
-            right_counts = np.unique(targets_right, return_counts=True) if targets_right is not None else None
-
-            self.print(f'stop because of min_samples_leaf {node} left:\n{left_counts}\nright:\n{right_counts}')
+            self.print(f'stop because of min_samples_leaf {node}')
             return False
 
         new_depth = node.depth + 1
@@ -206,21 +164,16 @@ class DecisionTreeClassifier():
             node.feature_index = found_feature_index
             node.feature_threshold = found_threshold
         
-        left_clazz, left_clazz_percentage = self.get_clazz_and_its_percentage(targets_left)
-        node.left = TreeNode(impurity = min_impurity_left, depth = new_depth, nsamples=len(targets_left), hindex=node.hindex * 2, clazz=left_clazz, clazz_percentage=left_clazz_percentage)
+        left_clazz, left_clazz_percentage = self.calculate_value_and_its_percentage_for_node(targets_left)
+
+        node.left = TreeNode(impurity = min_impurity_left, depth = new_depth, nsamples=len(targets_left), hindex=node.hindex * 2, value=left_clazz, clazz_percentage=left_clazz_percentage)
         self.split_inner_node(node.left, features_left, targets_left)
 
-        right_clazz, right_clazz_percentage = self.get_clazz_and_its_percentage(targets_right)
-        node.right = TreeNode(impurity = min_impurity_right, depth = new_depth, nsamples=len(targets_right), hindex=node.hindex*2 + 1, clazz=right_clazz, clazz_percentage=right_clazz_percentage)
+        right_clazz, right_clazz_percentage = self.calculate_value_and_its_percentage_for_node(targets_right)
+        node.right = TreeNode(impurity = min_impurity_right, depth = new_depth, nsamples=len(targets_right), hindex=node.hindex*2 + 1, value=right_clazz, clazz_percentage=right_clazz_percentage)
         self.split_inner_node(node.right, features_right, targets_right)
         
         return True
-
-    def get_clazz_and_its_percentage(self, targets_left):
-        left_value_counts = np.unique(targets_left, return_counts=True)
-        left_clazz_index = left_value_counts[1].argmax()
-        left_clazz_percentage = left_value_counts[1][left_clazz_index] / np.sum(left_value_counts[1])
-        return (left_value_counts[0][left_clazz_index], left_clazz_percentage)
 
 
     def separate_and_get_impurity(self, threshold, features, feature_index, targets):
@@ -231,20 +184,12 @@ class DecisionTreeClassifier():
 
         features_more = features[indexes_more]
         features_less = features[indexes_less]
-        targets_more = targets[indexes_more]
-        targets_less = targets[indexes_less]
+        y_right = targets[indexes_more]
+        y_left = targets[indexes_less]
 
-        left_impurity = 0
-        right_impurity = 0
-        for c in self.classes:
-            left_impurity += self.calc_impurity_for_class(targets_less[targets_less == c].shape[0], targets_less.shape[0])
-            right_impurity += self.calc_impurity_for_class(targets_more[targets_more == c].shape[0], targets_more.shape[0])
+        left_impurity, right_impurity = self.calculate_impurity(targets, y_left, y_right)
 
-        total_samples = len(targets_more) + len(targets_less)
-        left_impurity = (left_impurity * len(targets_less)) / total_samples
-        right_impurity = (right_impurity * len(targets_more)) / total_samples
-
-        return features_more, features_less, targets_more, targets_less, left_impurity, right_impurity
+        return features_more, features_less, y_right, y_left, left_impurity, right_impurity
 
 
     def find_best_impurity(self, features, targets):
@@ -260,13 +205,13 @@ class DecisionTreeClassifier():
             for index in range(1, len(unique)):
 
                 threshold = unique[index]
-                features_more, features_less, targets_more, targets_less, left_impurity, right_impurity = self.separate_and_get_impurity(threshold, features, feature, targets)
+                features_more, features_less, y_right, y_left, left_impurity, right_impurity = self.separate_and_get_impurity(threshold, features, feature, targets)
                 
                 if left_impurity + right_impurity < (min_impurity_left + min_impurity_right):
 
                     min_impurity_left, min_impurity_right = left_impurity, right_impurity
                     features_left, features_right = features_less, features_more
-                    targets_left, targets_right = targets_less, targets_more
+                    targets_left, targets_right = y_left, y_right
                     found_threshold = threshold
                     found_feature = feature
 
@@ -287,13 +232,16 @@ class DecisionTreeClassifier():
             
             unique =  np.sort(np.unique(features[:, feature_index]))
             
-            mx = unique[-2]
-            mn = unique[1]
+            threshold = 0
 
-            threshold = (mx - mn) * random_numbers[feature_index] + mn
+            if len(unique) == 1:
+                threshold = unique[0]
+            else:
+                mx = unique[-2]
+                mn = unique[1]
+                threshold = (mx - mn) * random_numbers[feature_index] + mn
 
-
-            features_more, features_less, targets_more, targets_less, left_impurity, right_impurity = self.separate_and_get_impurity(threshold, features, feature_index, targets)
+            features_more, features_less, y_right, y_left, left_impurity, right_impurity = self.separate_and_get_impurity(threshold, features, feature_index, targets)
             
             self.print(f'threshold = {threshold} len more {features_more.shape}, len less {features_less.shape}')
 
@@ -301,7 +249,7 @@ class DecisionTreeClassifier():
 
                 min_impurity_left, min_impurity_right = left_impurity, right_impurity
                 features_left, features_right = features_less, features_more
-                targets_left, targets_right = targets_less, targets_more
+                targets_left, targets_right = y_left, y_right
                 found_threshold = threshold
                 found_feature = feature_index
 
@@ -318,9 +266,6 @@ class DecisionTreeClassifier():
         if self.root_node.left is None:
             raise Exception('we dont have any nodes')
 
-        if isinstance(features, pd.DataFrame):
-            features = features.values
-
         targets = np.empty(features.shape[0])
 
         # we predict features one by one because view of a view of a view can lose references to original array numpy
@@ -336,7 +281,7 @@ class DecisionTreeClassifier():
     def predict_node(self, node: TreeNode, features):
 
         if node.is_leaf():
-            return node.clazz
+            return node.value
             
         else:
             feature_value = features[node.feature_index]
@@ -344,3 +289,85 @@ class DecisionTreeClassifier():
                 return self.predict_node(node.right, features)
             else:
                 return self.predict_node(node.left, features)
+
+
+class DecisionTreeRegressor(DecisionTree):
+
+    def calculate_value_and_its_percentage_for_node(self, y):
+        return (y[0] if len(y) == 1 else np.mean(y), 0)
+
+    def squared_residual_sum(self, y):
+        return np.sum((y - np.mean(y)) ** 2)
+
+    def calculate_impurity(self, y, y_left, y_right):
+
+        #return (np.var(y_left), np.var(y_right))
+
+        return (self.squared_residual_sum(y_left), self.squared_residual_sum(y_right))
+
+    def calculate_variance(self, X):
+        """ Return the variance of the features in dataset X """
+        mean = np.ones(np.shape(X)) * X.mean(0)
+        n_samples = np.shape(X)[0]
+        variance = (1 / n_samples) * np.diag((X - mean).T.dot(X - mean))
+        
+        return variance
+        
+class DecisionTreeClassifier(DecisionTree):
+
+    def fit(self, X, y):
+        self.classes = np.unique(y)
+
+        super().fit(X, y)
+
+    def calculate_value_and_its_percentage_for_node(self, y):
+
+        left_value_counts = np.unique(y, return_counts=True)
+        left_clazz_index = left_value_counts[1].argmax()
+        left_clazz_percentage = left_value_counts[1][left_clazz_index] / np.sum(left_value_counts[1])
+        return (left_value_counts[0][left_clazz_index], left_clazz_percentage)
+
+
+    def calculate_impurity(self, y, y_left, y_right):
+        left_impurity = 0 
+        right_impurity = 0
+
+        for c in self.classes:
+            left_impurity += self.calc_impurity_for_class(y_left[y_left == c].shape[0], y_left.shape[0])
+            right_impurity += self.calc_impurity_for_class(y_right[y_right == c].shape[0], y_right.shape[0])
+
+        total_samples = len(y)
+        left_impurity = (left_impurity * len(y_left)) / total_samples
+        right_impurity = (right_impurity * len(y_right)) / total_samples
+
+        return (left_impurity, right_impurity)
+
+
+    def calc_entropy_for_class(self, class_counts, total_samples):
+        if total_samples == 0:
+            return 0
+
+        p = class_counts / total_samples
+
+        return -p * np.log2(p)
+
+    def calc_entropy(self, classes_counts, total_samples):
+        return sum([self.calc_entropy_for_class(x, total_samples) for x in classes_counts])
+
+    def calc_gini(self, samples, total_samples):
+
+        gini = 0
+        for sample in samples:
+            gini += self.calc_gini_for_class(sample, total_samples)
+
+        return gini
+
+    def calc_gini_for_class(self, sample, total_samples):
+        if total_samples == 0:
+            return 0
+        p = sample / total_samples
+
+        return p * (1 - p)
+
+    def calc_impurity_for_class(self, sample, total_samples):
+        return self.calc_entropy_for_class(sample, total_samples) if self.criterion == 'entropy' else self.calc_gini_for_class(sample, total_samples)

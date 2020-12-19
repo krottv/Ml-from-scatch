@@ -1,9 +1,8 @@
 import numpy as np
-import pandas as pd
-from decision_tree_np import DecisionTreeClassifier
+from decision_tree import DecisionTreeClassifier, DecisionTreeRegressor
+from abc import ABC, abstractmethod
 
-
-class RandomForestClassifier: 
+class RandomForest(ABC): 
     """
     Uses ensemble of decision trees on subset of random data using random subset of features
     
@@ -16,48 +15,55 @@ class RandomForestClassifier:
     max_features
         maximum number of features that decision tree is allowed to use. If none, use sqrt(features)
 
-    All other parameters are the same as in decision_tree
+    All other parameters are the same as in decision_tree except criterion (always gini). splitter (always random)
 
     """
 
-    def __init__(self, n_estimators=10, max_features=None, max_depth=32, min_samples_split=2, min_samples_leaf=1, criterion='gini', debug=False, splitter='best', min_impurity_decrease = 0, random_state=None):
+    def __init__(self, n_estimators=10, max_features=None, max_depth=32, min_samples_split=2, min_samples_leaf=1, debug=False, min_impurity_decrease = 0, random_state=None):
 
         self.n_estimators = n_estimators
         self.max_features = max_features
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
-        self.criterion = criterion
         self.debug = debug
-        self.splitter = splitter
         self.min_impurity_decrease = min_impurity_decrease
         self.random_state = np.random.RandomState(seed=random_state)
 
         self.trees = []
 
         for _ in range(0, n_estimators):
-            self.trees.append(DecisionTreeClassifier(max_depth=max_depth, min_samples_split=min_samples_split, min_samples_leaf=min_samples_leaf,
-             criterion=criterion, debug=debug, splitter=splitter, min_impurity_decrease=min_impurity_decrease, random_state=random_state))
+            self.trees.append(self.initDecisionTree(random_state))
 
+    @abstractmethod
+    def initDecisionTree(self, random_state):
+        pass
+
+    @abstractmethod
+    def predict_samples(self, predictions):
+        pass
 
     def fit(self, features, target):
 
-        if isinstance(features, pd.DataFrame):
-            features = features.values
-        if isinstance(target, pd.Series):
-            target = target.values
+        """
+        First we get subsets with replacement of original data for each tree.
+        Plus we feed only random choice of features of the subset
+        This is called bagging.
+        It creates uncorrelated trees that buffer and protect each other from their errors.
+        """
 
         n_features = np.shape(features)[1]
         max_features = self.max_features
         if max_features is None:
             max_features = np.sqrt(n_features).astype('int')
+        elif max_features == 'max':
+            max_features = n_features
 
         subsets = self.get_random_subsets(features, target, self.n_estimators)
 
         for i in range(self.n_estimators):
             X_subset, y_subset = subsets[i]
 
-            # Feature bagging (select random subsets of the features)
             ids = self.random_state.choice(range(n_features), max_features, replace=True)
         
             # Save the indices of the features for prediction
@@ -69,12 +75,9 @@ class RandomForestClassifier:
 
             # Fit the tree to the data
             tree.fit(features_to_fit, y_subset)
-
         
     def predict(self, features):
-        if isinstance(features, pd.DataFrame):
-            features = features.values
-        
+    
         predictions = np.full((features.shape[0], self.n_estimators), 0)
         # Let each tree make a prediction on the data
         
@@ -89,14 +92,7 @@ class RandomForestClassifier:
 
             predictions[:, i] = predicted
             
-        result = np.empty(features.shape[0])
-
-        # For each sample
-        for i in range(predictions.shape[0]):
-
-            # Select the most common class prediction
-            most_frequent_class = np.bincount(predictions[i, :]).argmax()
-            result[i] = most_frequent_class
+        result = self.predict_samples(predictions)
 
         return result
 
@@ -104,10 +100,7 @@ class RandomForestClassifier:
         return max([x.get_depth() for x in self.trees])
 
     def get_random_subsets(self, features, target, n_subsets):
-        """
-        1. concatenate features and target
-        2. choice
-        """
+    
         select_indexes = range(len(target))
 
         result = []
@@ -119,4 +112,28 @@ class RandomForestClassifier:
 
         return result
 
+
+class RandomForestClassifier(RandomForest):
+
+    def initDecisionTree(self, random_state):
+        return DecisionTreeClassifier(max_depth=self.max_depth, min_samples_split=self.min_samples_split, min_samples_leaf=self.min_samples_leaf, criterion='gini', debug=self.debug, splitter='random', min_impurity_decrease=self.min_impurity_decrease, random_state=random_state)
+
+    def predict_samples(self, predictions):
+        result = np.empty(predictions.shape[0])
+
+        # For each sample
+        for i in range(predictions.shape[0]):
             
+            # Select the most common class prediction
+            most_frequent_class = np.bincount(predictions[i, :]).argmax()
+            result[i] = most_frequent_class
+        
+        return result
+
+            
+class RandomForestRegressor(RandomForest):
+    def initDecisionTree(self, random_state):
+        return DecisionTreeRegressor(max_depth=self.max_depth, min_samples_split=self.min_samples_split, min_samples_leaf=self.min_samples_leaf, criterion='gini', debug=self.debug, splitter='random', min_impurity_decrease=self.min_impurity_decrease, random_state=random_state)
+    
+    def predict_samples(self, predictions):
+        return np.mean(predictions, axis=1)

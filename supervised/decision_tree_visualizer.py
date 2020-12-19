@@ -3,10 +3,10 @@ import graphviz
 def visualize_children(dot, color_classes, label_classes, label_features, root_node):
     if root_node.left is not None and root_node.right is not None:
         
-        dot.attr('node', shape='rectangle', color=color_classes[root_node.left.clazz])
+        dot.attr('node', shape='rectangle', color=color_classes[root_node.left.value])
         dot.node(root_node.left.graph_id(), root_node.left.displayName(label_features=label_features, label_classes=label_classes))
 
-        dot.attr('node', shape='rectangle', color=color_classes[root_node.right.clazz])
+        dot.attr('node', shape='rectangle', color=color_classes[root_node.right.value])
         dot.node(root_node.right.graph_id(), root_node.right.displayName(label_features=label_features, label_classes=label_classes))
 
         dot.edge(root_node.graph_id(), root_node.left.graph_id())
